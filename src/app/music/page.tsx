@@ -201,6 +201,10 @@ export default function MusicPage() {
   const [currentView, setCurrentView] = useState<'playlists' | 'songs' | 'myPlaylists'>('playlists');
   const [currentPlaylistTitle, setCurrentPlaylistTitle] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [activeSearchKeyword, setActiveSearchKeyword] = useState('');
+  const [searchPage, setSearchPage] = useState(1);
+  const [searchHasMore, setSearchHasMore] = useState(false);
+  const [loadingMoreSearch, setLoadingMoreSearch] = useState(false);
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -277,6 +281,7 @@ export default function MusicPage() {
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
+  const searchLoadMoreRef = useRef<HTMLDivElement>(null);
   const lastSaveTimeRef = useRef<number>(0);
   const restoredTimeRef = useRef<number>(0);
   const songStartTimeRef = useRef<number>(0); // 歌曲开始播放的时间戳
@@ -702,6 +707,9 @@ export default function MusicPage() {
       const data = await response.json();
       setSongs((data.data?.list || []).map(mapSong));
       setCurrentPlaylistTitle(playlistName);
+      setActiveSearchKeyword('');
+      setSearchPage(1);
+      setSearchHasMore(false);
       setCurrentView('songs');
     } catch (error) {
       console.error('加载歌单失败:', error);
@@ -785,22 +793,65 @@ export default function MusicPage() {
 
   // 搜索歌曲
   const searchSongs = async () => {
-    if (!searchKeyword.trim()) return;
+    const keyword = searchKeyword.trim();
+    if (!keyword) return;
 
     setLoading(true);
     try {
       const response = await fetch(
-        `/api/music/v2/search?source=${currentSource}&q=${encodeURIComponent(searchKeyword)}&page=1&limit=20`
+        `/api/music/v2/search?source=${currentSource}&q=${encodeURIComponent(keyword)}&page=1&limit=20`
       );
       const data = await response.json();
       setSongs((data.data?.list || []).map(mapSong));
-      setCurrentPlaylistTitle(`搜索: ${searchKeyword}`);
+      setActiveSearchKeyword(keyword);
+      setSearchPage(1);
+      setSearchHasMore(Boolean(data.data?.hasMore));
+      setCurrentPlaylistTitle(`搜索: ${keyword}`);
       setCurrentView('songs');
     } catch (error) {
       console.error('搜索失败:', error);
       setSongs([]);
+      setActiveSearchKeyword('');
+      setSearchPage(1);
+      setSearchHasMore(false);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMoreSearchSongs = async () => {
+    const keyword = activeSearchKeyword.trim();
+    if (!keyword || loadingMoreSearch || !searchHasMore) return;
+
+    const nextPage = searchPage + 1;
+    setLoadingMoreSearch(true);
+    try {
+      const response = await fetch(
+        `/api/music/v2/search?source=${currentSource}&q=${encodeURIComponent(keyword)}&page=${nextPage}&limit=20`
+      );
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        const nextSongs = (data.data?.list || []).map(mapSong);
+        setSongs((prev) => [...prev, ...nextSongs]);
+        setSearchPage(nextPage);
+        setSearchHasMore(Boolean(data.data?.hasMore));
+      } else {
+        setToast({
+          message: data.error?.message || '加载更多失败',
+          type: 'error',
+          onClose: () => setToast(null),
+        });
+      }
+    } catch (error) {
+      console.error('加载更多搜索结果失败:', error);
+      setToast({
+        message: '加载更多失败',
+        type: 'error',
+        onClose: () => setToast(null),
+      });
+    } finally {
+      setLoadingMoreSearch(false);
     }
   };
 
@@ -1416,6 +1467,9 @@ export default function MusicPage() {
     if (currentView === 'songs') {
       setCurrentView('playlists');
       setSongs([]);
+      setActiveSearchKeyword('');
+      setSearchPage(1);
+      setSearchHasMore(false);
     } else if (currentView === 'myPlaylists') {
       setCurrentView('playlists');
       setSelectedUserPlaylist(null);
@@ -1444,6 +1498,9 @@ export default function MusicPage() {
     setCurrentView('playlists');
     setSongs([]);
     setSearchKeyword('');
+    setActiveSearchKeyword('');
+    setSearchPage(1);
+    setSearchHasMore(false);
   };
 
   // 音频事件监听
@@ -1601,6 +1658,27 @@ export default function MusicPage() {
       searchSongs();
     }
   };
+
+  useEffect(() => {
+    const sentinel = searchLoadMoreRef.current;
+    if (!sentinel || !activeSearchKeyword || !searchHasMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          loadMoreSearchSongs();
+        }
+      },
+      {
+        root: null,
+        rootMargin: '240px 0px 240px 0px',
+        threshold: 0,
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [activeSearchKeyword, searchHasMore, loadingMoreSearch, searchPage]);
 
   // 进度条拖动
   const handleProgressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2122,9 +2200,25 @@ export default function MusicPage() {
                   </div>
                 ))}
               </div>
+              {activeSearchKeyword && (
+                <div ref={searchLoadMoreRef} className="mt-6 flex min-h-10 justify-center">
+                  {searchHasMore ? (
+                    loadingMoreSearch ? (
+                      <div className="rounded-lg border border-white/10 bg-white/5 px-5 py-2.5">
+                        <MusicLoadingIndicator size="sm" className="gap-2 text-white" />
+                      </div>
+                    ) : (
+                      <div className="text-xs text-zinc-500">
+                        继续向下滚动加载更多
+                      </div>
+                    )
+                  ) : songs.length > 0 ? (
+                    <div className="text-xs text-zinc-500">没有更多搜索结果了</div>
+                  ) : null}
+                </div>
+              )}
             </div>
           )}
-
           {/* My Playlists View */}
           {currentView === 'myPlaylists' && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
