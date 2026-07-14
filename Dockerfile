@@ -73,8 +73,6 @@ COPY --from=builder --chown=nextjs:nodejs /tmp/prod-deps/node_modules ./node_mod
 RUN mkdir -p /app/.data "$OFFLINE_DOWNLOAD_DIR" \
   && chown -R nextjs:nodejs /app/.data "$OFFLINE_DOWNLOAD_DIR"
 
-# 切换到非特权用户
-USER nextjs
 
 EXPOSE 3000
 
